@@ -1,0 +1,18 @@
+import json
+
+# read file
+with open('twitter-1mb.json', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+#Grab the array of tweets
+listOfTweets = data['rows']
+
+#In every element of the array (So, for every tweet)
+for i in range(len(listOfTweets)):
+#Try to get the date if it exists
+    try:
+        date = str(listOfTweets[i].get('doc').get('data').get('created_at'))
+        print(date)
+#If the date doesn't exist, justkeep going and ignore it
+    except Exception:
+        pass

@@ -1,0 +1,23 @@
+import re
+import json
+
+# read file
+with open('twitter-1mb.json', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+listOfTweets = data['rows']
+
+for i in range(len(listOfTweets)):
+    try:
+        date = str(listOfTweets[i].get('doc').get('data').get('created_at'))
+        splitDateFromTime = re.split(r'[-T]', date)
+        Year = splitDateFromTime[0]
+        Month = splitDateFromTime[1]
+        Day = splitDateFromTime[2]
+        splitTime = splitDateFromTime[3].split(r':')
+        Hour = splitTime[0]
+        Minutes = splitTime[1]
+        Seconds = splitTime[2].rstrip('Z')
+        print("Day: ", Day, "Hour: ", Hour, "Minutes:", Minutes, "Seconds: ", Seconds)
+    except Exception:
+        pass

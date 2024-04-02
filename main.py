@@ -100,8 +100,6 @@ def divide_records(records):
     tasks.append(records)
 
     return tasks
-        
-
 
 def process(task):
     """
@@ -151,14 +149,11 @@ def process(task):
 
     return [MMDDTweets, MMDDSenTweets, hourTweets, hourSenTweets]
 
-
-
 def combine_dicts(dicts):
     result = dicts[0]
     for dict in dicts[1:]:
         result = {k: result.get(k, 0) + dict.get(k, 0) for k in set(result) | set(dict)}
     return result
-
 
 if __name__ == "__main__":
     main()

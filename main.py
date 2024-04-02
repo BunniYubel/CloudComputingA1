@@ -4,8 +4,6 @@ import ijson
 MAX_RECORDS = 1000
 comm = MPI.COMM_WORLD
 
-
-
 def main():
 
     # Setup data file
@@ -15,10 +13,13 @@ def main():
 
         # Keep track of how many tweets are made on a given month-day
         LargeMMDDTweets = {}
+
         # Keep track of total sentiment of tweets of a given day in a given month-day
         LargeMMDDSenTweets = {}
+
         # Keep track of how many tweets are made on a given month-day-hour
         LargehourTweets = {}
+
         # Keep track of total sentiment of tweets of a given hour of a given day in a given month-day-hour
         LargehourSenTweets = {}
 
@@ -38,18 +39,22 @@ def main():
         else:
             tasks = None
 
-        
+        # Ensure all tasks know is file has ended
+        is_file = comm.bcast(is_file, root=0)
+
         # Scatter the tasks to each node and work
         task = comm.scatter(tasks, root=0)
         result = process(task)
         results = comm.gather(result, root=0)
         
+        # Combine results into larger dictionaries
         if comm.rank == 0:
             LargeMMDDTweets = combine_dicts([LargeMMDDTweets] + [i[0] for i in results])
             LargeMMDDSenTweets = combine_dicts([LargeMMDDSenTweets] + [i[1] for i in results])
             LargehourTweets = combine_dicts([LargehourTweets] + [i[2] for i in results])
             LargehourSenTweets = combine_dicts([LargehourSenTweets] + [i[3] for i in results])
 
+    # Find and print results
     if comm.rank == 0:
         mostTweetsInDay = max(LargeMMDDTweets, key=LargeMMDDTweets.get)
         happiestDay = max(LargeMMDDSenTweets, key=LargeMMDDSenTweets.get)
@@ -59,8 +64,6 @@ def main():
         print("Month-Day-Hour with the most tweets", mostTweetsInHour)
         print("Month-Day with the happiest tweets: ", happiestDay, "with a sentiment score of: ", LargeMMDDSenTweets[happiestDay])
         print("Month-Day-Hour with the happiest tweets: ", happiestHour, "with a sentiment score of: ", LargehourSenTweets[happiestHour])
-
-
 
 def read_data_chunk(items):
     """
@@ -79,8 +82,6 @@ def read_data_chunk(items):
 
         records.append(item)
     return records
-
-
 
 def divide_records(records):
     """

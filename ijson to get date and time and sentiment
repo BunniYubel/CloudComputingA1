@@ -1,0 +1,50 @@
+import ijson
+import json
+"""
+# Preview data using ijson
+with open("twitter-1mb.json", "r", encoding="utf-8") as f:
+    parser = ijson.parse(f)
+    for prefix,data_type,value in parser:
+        print(f"prefix_parent:{prefix},data_type:{data_type},value:{value}")
+        
+"""
+
+"""
+# Read data using ijson (Only dates)
+with open("twitter-1mb.json", "r", encoding="utf-8") as f:
+    date = ijson.items(f, "rows.item.doc.data.created_at")
+
+    fullDateJson = [i for i in date]
+
+    # splitDates is a list of lists that contain 2 elements each. Splits YYYY-MM-DD from HH-MM-SS.
+    splitDates = [(d.split("T")[0], d.split("T")[1].split(".")[0]) for d in fullDateJson]
+    for i in range(len(splitDates)):
+        print(splitDates[i])
+"""
+# Read data using ijson (Attempting to get both sentiment value and date
+with open("twitter-1mb.json", "r", encoding="utf-8") as f:
+    items = ijson.items(f, "rows.item.doc")
+    dateData = []
+    timeData = []
+
+    for item in items:
+        sentimentData = item["data"].get("sentiment")
+        if isinstance(sentimentData, dict):
+            sentiment = sentimentData.get("score", None)
+        else:
+            sentiment = sentimentData
+        created_at = item["data"].get("created_at")
+
+        # Get only the Month-Day with the corresponding sentiment
+        dateData.append(((created_at.split("T")[0].split("-")[1], created_at.split("T")[0].split("-")[2]), sentiment))
+        # Get only the hour since we're only concerned with the hour. Both dateData and timeData are the same size so 
+        # the hours should line up with the day
+        timeData.append((created_at.split("T")[1].split(".")[0].split(":")[1], sentiment))
+
+
+# print("size of date Data", len(dateData), "Size of time data", len(timeData))
+
+
+for i in range(len(dateData)):
+    print(dateData[i])
+    print(timeData[i])

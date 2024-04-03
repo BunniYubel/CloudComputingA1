@@ -1,5 +1,6 @@
 from mpi4py import MPI
 import ijson
+import sys
 
 MAX_RECORDS = 1000
 comm = MPI.COMM_WORLD
@@ -8,7 +9,8 @@ def main():
 
     # Setup data file
     if comm.rank == 0:
-        f = open("twitter-50mb.json", "r", encoding="utf-8")
+        start = MPI.Wtime()
+        f = open(sys.argv[1], "r", encoding="utf-8")
         items = ijson.items(f, "rows.item.doc")
 
         # Keep track of how many tweets are made on a given month-day
@@ -60,10 +62,12 @@ def main():
         happiestDay = max(LargeMMDDSenTweets, key=LargeMMDDSenTweets.get)
         mostTweetsInHour = max(LargehourTweets, key=LargehourTweets.get)
         happiestHour = max(LargehourSenTweets, key=LargehourSenTweets.get)
-        print("Month-Day with the most tweets: ", mostTweetsInDay)
-        print("Month-Day-Hour with the most tweets", mostTweetsInHour)
+        print("Month-Day with the most tweets: ", mostTweetsInDay, "with a total of: ", LargeMMDDTweets[mostTweetsInDay])
         print("Month-Day with the happiest tweets: ", happiestDay, "with a sentiment score of: ", LargeMMDDSenTweets[happiestDay])
+        print("Month-Day-Hour with the most tweets", mostTweetsInHour, "with a total of: ", LargehourTweets[mostTweetsInHour])
         print("Month-Day-Hour with the happiest tweets: ", happiestHour, "with a sentiment score of: ", LargehourSenTweets[happiestHour])
+        
+        print("Total time in seconds taken: ", MPI.Wtime() - start)
 
 def read_data_chunk(items):
     """

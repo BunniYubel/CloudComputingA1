@@ -1,17 +1,22 @@
 from mpi4py import MPI
-import ijson
 import sys
+import os
+import json
 
-MAX_RECORDS = 1000
 comm = MPI.COMM_WORLD
 
 def main():
+ 
+    start = MPI.Wtime()
+    f = open(sys.argv[1], "r", encoding="utf8")
+    chunk_size = os.path.getsize(sys.argv[1]) // comm.size
+    
+    # Setup partitions, ensuring they start at beginning of new record
+    f.seek(chunk_size*comm.rank)
+    next_record(f)
 
-    # Setup data file
+    # Setup large dictionaries
     if comm.rank == 0:
-        start = MPI.Wtime()
-        f = open(sys.argv[1], "r", encoding="utf-8")
-        items = ijson.items(f, "rows.item.doc")
 
         # Keep track of how many tweets are made on a given month-day
         LargeMMDDTweets = {}
@@ -25,36 +30,15 @@ def main():
         # Keep track of total sentiment of tweets of a given hour of a given day in a given month-day-hour
         LargehourSenTweets = {}
 
-    is_file = True
-    while (is_file):
-
-        # Scatter the data
-        if comm.rank == 0:
-            records = read_data_chunk(items)
-            tasks = divide_records(records)
-
-            # Check if reached end of file
-            if len(tasks[0]) != MAX_RECORDS:
-                is_file = False
-        
-        # No other node has 'tasks' to scatter
-        else:
-            tasks = None
-
-        # Ensure all tasks know is file has ended
-        is_file = comm.bcast(is_file, root=0)
-
-        # Scatter the tasks to each node and work
-        task = comm.scatter(tasks, root=0)
-        result = process(task)
-        results = comm.gather(result, root=0)
-        
-        # Combine results into larger dictionaries
-        if comm.rank == 0:
-            LargeMMDDTweets = combine_dicts([LargeMMDDTweets] + [i[0] for i in results])
-            LargeMMDDSenTweets = combine_dicts([LargeMMDDSenTweets] + [i[1] for i in results])
-            LargehourTweets = combine_dicts([LargehourTweets] + [i[2] for i in results])
-            LargehourSenTweets = combine_dicts([LargehourSenTweets] + [i[3] for i in results])
+    result = process(f, chunk_size)
+    results = comm.gather(result, root=0)
+    
+    # Combine results into larger dictionaries
+    if comm.rank == 0:
+        LargeMMDDTweets = combine_dicts([LargeMMDDTweets] + [i[0] for i in results])
+        LargeMMDDSenTweets = combine_dicts([LargeMMDDSenTweets] + [i[1] for i in results])
+        LargehourTweets = combine_dicts([LargehourTweets] + [i[2] for i in results])
+        LargehourSenTweets = combine_dicts([LargehourSenTweets] + [i[3] for i in results])
 
     # Find and print results
     if comm.rank == 0:
@@ -69,46 +53,11 @@ def main():
         
         print("Total time in seconds taken: ", MPI.Wtime() - start)
 
-def read_data_chunk(items):
+def process(f, chunk_size):
     """
-    Helper function used to read fixed size data chunk into a list of records.
-    For ease of implementation we don't completely preprocess data.
-    """
-
-    records = []
-    for i in range(comm.size * MAX_RECORDS):
-
-        # Ensure a next item exists, otherwise stop early
-        try:
-            item = next(items)
-        except StopIteration: 
-            break
-
-        records.append(item)
-    return records
-
-def divide_records(records):
-    """
-    Helper function used to divide a larger list of json records into a list
-    of comm.size smaller sized list of json records, or 'tasks'. 
-    Simply wraps records into another list if comm.size = 1 for consistency.
-    """
-
-    tasks = []
-    task_size = len(records) // comm.size
-    for i in range(comm.size - 1):
-        tasks.append(records[0:task_size])
-        records = records[task_size:]
-
-    # Ensure any remainders due to integer rounding are added to last 'task'
-    tasks.append(records)
-
-    return tasks
-
-def process(task):
-    """
-    Helper function which calculates relevant information for subset of data task.
-    Returns a list of dictionaries for all 4 desired statistics
+    Helper function which takes a file object, and integer indicating the chunk
+    size in bytes as input. Gathers all required data and return a list of 
+    dictionaries storing this data.
     """
 
     # Keep track of how many tweets are made on a given month-day
@@ -120,43 +69,102 @@ def process(task):
     # Keep track of total sentiment of tweets of a given hour of a given day in a given month-day-hour
     hourSenTweets = {}
 
-    for item in task:
-        sentimentData = item["data"].get("sentiment")
-        if isinstance(sentimentData, dict):
-            sentiment = sentimentData.get("score", None)
-        else:
-            sentiment = sentimentData
-        created_at = item["data"].get("created_at")
+    # Progress until we go past the starting point of next partition
+    while (f.tell() < chunk_size * (comm.rank + 1)):
+        record = get_next_record(f)
 
-        # Get only the Month-Day with the corresponding sentiment
-        monthDay = (created_at.split("T")[0].split("-")[1], created_at.split("T")[0].split("-")[2])
+        if record is not None:
 
-        # Make a key for the dictionary to remember how many tweets were tweeted in given day of a given month
-        MMDDKey = ''.join(monthDay)
+            recordDict = json.loads(record)
 
-        # Increment number of tweets in that given month-day combination
-        MMDDTweets[MMDDKey] = MMDDTweets.get(MMDDKey, 0) + 1
+            item = recordDict["doc"]
 
-        # Sum up sentiment for a given MMDD Combination
-        MMDDSenTweets[MMDDKey] = MMDDSenTweets.get(MMDDKey, 0) + (sentiment if sentiment is not None else 0)
+            sentimentData = item["data"].get("sentiment")
+            if isinstance(sentimentData, dict):
+                sentiment = sentimentData.get("score", None)
+            else:
+                sentiment = sentimentData
+            created_at = item["data"].get("created_at")
 
-        # Get only the hour since we're only concerned with the hour. Both dateData and timeData are the same size so
-        # the hours should line up with the day. We get Month-Day-Hour
-        hour = (created_at.split("T")[0].split("-")[1], created_at.split("T")[0].split("-")[2], created_at.split("T")[1].split(".")[0].split(":")[0])
-        hourKey = ''.join(hour)
+            # Get only the Month-Day with the corresponding sentiment
+            monthDay = (created_at.split("T")[0].split("-")[1], created_at.split("T")[0].split("-")[2])
 
-        # Increment number of tweets in that given month-day-hour combination
-        hourTweets[hourKey] = hourTweets.get(hourKey, 0) + 1
+            # Make a key for the dictionary to remember how many tweets were tweeted in given day of a given month
+            MMDDKey = ''.join(monthDay)
 
-        # Sum up sentiment for a given MMDDHH combination
-        hourSenTweets[hourKey] = hourSenTweets.get(hourKey, 0) + (sentiment if sentiment is not None else 0)
+            # Increment number of tweets in that given month-day combination
+            MMDDTweets[MMDDKey] = MMDDTweets.get(MMDDKey, 0) + 1
+
+            # Sum up sentiment for a given MMDD Combination
+            MMDDSenTweets[MMDDKey] = MMDDSenTweets.get(MMDDKey, 0) + (sentiment if sentiment is not None else 0)
+
+            # Get only the hour since we're only concerned with the hour. Both dateData and timeData are the same size so
+            # the hours should line up with the day. We get Month-Day-Hour
+            hour = (created_at.split("T")[0].split("-")[1], created_at.split("T")[0].split("-")[2], created_at.split("T")[1].split(".")[0].split(":")[0])
+            hourKey = ''.join(hour)
+
+            # Increment number of tweets in that given month-day-hour combination
+            hourTweets[hourKey] = hourTweets.get(hourKey, 0) + 1
+
+            # Sum up sentiment for a given MMDDHH combination
+            hourSenTweets[hourKey] = hourSenTweets.get(hourKey, 0) + (sentiment if sentiment is not None else 0)
 
     return [MMDDTweets, MMDDSenTweets, hourTweets, hourSenTweets]
+    
+def next_record(f):
+    """
+    Helper function which progresses the input file object to the next record
+    """
+    while True:
+
+        # Get to next line
+        f.readline()
+
+        # Ensure we see id section for next record
+        position = f.tell()
+        if f.readline()[:6] == '{"id":':
+            f.seek(position)
+            break
+
+def get_next_record(f):
+    """
+    Helper function which retrieves and returns the next record in the input
+    file.
+    """
+    result = ""
+    while True:
+
+        # Get to next line
+        result += f.readline()
+
+        # Ignore empty objects and end of file line
+        if (result[:2] == "{}") or (result == ""):
+            return None
+        
+        # Ensure we see id section for next record
+        position = f.tell()
+        f.seek(position)
+        next_prefix = f.readline()[:6]
+        if (next_prefix == '{"id":') or (len(next_prefix) < 6):
+            
+            # Strip off final new line characters to make complete json object
+            result = result[:-2]
+            break
+
+    f.seek(position)
+
+    return result
 
 def combine_dicts(dicts):
+    """
+    Helper functions which takes a list of dictionaries as input, and combines 
+    them into a single dictioanry where any common keys have their respective 
+    values summed.
+    """
     result = dicts[0]
     for dict in dicts[1:]:
-        result = {k: result.get(k, 0) + dict.get(k, 0) for k in set(result) | set(dict)}
+        for key, value in dict.items():
+            result[key] = result.get(key, 0) + value
     return result
 
 if __name__ == "__main__":
